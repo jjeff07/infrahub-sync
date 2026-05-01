@@ -14,7 +14,7 @@ except ImportError:
     from typing_extensions import Self
 
 
-from diffsync import Adapter, DiffSyncModel
+from diffsync import Adapter, DiffSyncModel, DiffSyncStatus
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -28,6 +28,7 @@ from infrahub_sync import (
     DiffSyncModelMixin,
     SyncAdapter,
     SyncConfig,
+    InfrahubSyncFlags,
 )
 from infrahub_sync.generator import has_field
 
@@ -463,11 +464,27 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         create_data = adapter.client.schema.generate_payload_create(
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
-        node = adapter.client.create(kind=cls.__name__, data=create_data)
-        node.save(allow_upsert=True)
-        adapter.client.store.set(key=unique_id, node=node)
+        cfg = adapter.config.schema_mapping_dict.get(cls.__name__, {})
+
+        if (InfrahubSyncFlags.CONTINUE_ON_CREATE_FAILURE | InfrahubSyncFlags.CONTINUE_ON_BOTH_FAILURE) in cfg.infrasync_flags:
+            try:
+                cls._create(adapter=adapter, kind=cls.__name__, create_data=create_data, unique_id=unique_id)
+                model = super().create(adapter=adapter, ids=ids, attrs=attrs)
+                return model
+            except Exception as exc:
+                model = super().create(adapter=adapter, ids=ids, attrs=attrs)
+                model.set_status(DiffSyncStatus.FAILURE, message=str(exc))
+                return model
+        else:
+            cls._create(adapter=adapter, kind=cls.__name__, create_data=create_data, unique_id=unique_id)
 
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
+
+    @staticmethod
+    def _create(adapter: InfrahubAdapter, kind: str, create_data: dict[str, Any], unique_id) -> None:
+        node = adapter.client.create(kind=kind, data=create_data)
+        node.save(allow_upsert=True)
+        adapter.client.store.set(key=unique_id, node=node)
 
     def update(self, attrs: dict) -> Self | None:
         node = self.adapter.client.get(id=self.local_id, kind=self.__class__.__name__)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 import logging
 import operator
 import re
@@ -46,6 +47,26 @@ class SchemaMappingField(pydantic.BaseModel):
     reference: str | None = pydantic.Field(default=None)
 
 
+class InfrahubSyncFlags(enum.Flag):
+    """Flags that can be passed to a sync_* or diff_* call to affect its behavior."""
+
+    NONE = 0
+
+    CONTINUE_ON_CREATE_FAILURE = 0b1
+    """Continue synchronizing even if failures are encountered when creating individual objects."""
+
+    CONTINUE_ON_UPDATE_FAILURE = 0b10
+    """Continue synchronizing even if failures are encountered when updating individual objects."""
+
+    # SKIP_UNMATCHED_DST = 0b100
+    # """Ignore objects that only exist in the target/"to" DiffSync when determining diffs and syncing.
+    #
+    # If this flag is set, no objects will be deleted from the target/"to" DiffSync.
+    # """
+
+    CONTINUE_ON_BOTH_FAILURE = CONTINUE_ON_CREATE_FAILURE | CONTINUE_ON_UPDATE_FAILURE
+
+
 class SchemaMappingModel(pydantic.BaseModel):
     name: str
     mapping: str | None = pydantic.Field(default=None)
@@ -53,6 +74,24 @@ class SchemaMappingModel(pydantic.BaseModel):
     filters: list[SchemaMappingFilter] | None = pydantic.Field(default=None)
     transforms: list[SchemaMappingTransform] | None = pydantic.Field(default=None)
     fields: list[SchemaMappingField] | None = []
+    infrasync_flags: list[Union[str, InfrahubSyncFlags]] | None = []
+
+    @validator_decorator("infrasync_flags", **validator_kwargs)
+    def convert_str_to_enum(cls, v):
+        if not isinstance(v, list):
+            msg = "infrasync_flags must be provided as a list"
+            raise TypeError(msg)
+        new_flags = []
+        for item in v:
+            if isinstance(item, str):
+                try:
+                    new_flags.append(InfrahubSyncFlags[item])
+                except KeyError:
+                    msg = f"Invalid InfrahubSyncFlags value: {item}"
+                    raise ValueError(msg)
+            else:
+                new_flags.append(item)
+        return new_flags
 
 
 class SyncAdapter(pydantic.BaseModel):
@@ -92,6 +131,11 @@ class SyncConfig(pydantic.BaseModel):
             else:
                 new_flags.append(item)
         return new_flags
+
+    @property
+    def schema_mapping_dict(self) -> dict[str, SchemaMappingModel]:
+        """Return the schema mapping as a dictionary for easier access."""
+        return {element.name: element for element in self.schema_mapping}
 
 
 class SyncInstance(SyncConfig):

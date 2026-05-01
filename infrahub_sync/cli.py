@@ -169,7 +169,7 @@ def sync_cmd(
         if diff:
             logger.info("\n%s", mydiff.str())
         start_synctime = timer()
-        ptd.sync(diff=mydiff)
+        _sync = ptd.sync(diff=mydiff)
         end_synctime = timer()
         logger.info("Sync: Completed in %s sec", end_synctime - start_synctime)
     else:
